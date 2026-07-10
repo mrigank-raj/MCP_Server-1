@@ -8,26 +8,37 @@ const app = express();
 app.use(cors());
 
 const PORT = env.PORT || 3000;
-let transport: SSEServerTransport;
+const transports = new Map<string, SSEServerTransport>();
 
 async function main() {
   const mcpServer = createServer();
 
   app.get('/sse', async (req, res) => {
-    transport = new SSEServerTransport('/message', res);
+    const transport = new SSEServerTransport('/message', res);
     await mcpServer.connect(transport);
     
-    // Express closes the connection when the client disconnects
+    const sessionId = transport.sessionId;
+    if (sessionId) {
+      transports.set(sessionId, transport);
+    }
+    
     req.on('close', async () => {
+      if (sessionId) {
+        transports.delete(sessionId);
+      }
       await transport.close();
     });
   });
 
-  app.post('/message', express.json(), async (req, res) => {
+  app.post('/message', async (req, res) => {
+    const sessionId = req.query.sessionId as string;
+    const transport = transports.get(sessionId);
+    
     if (!transport) {
-      res.status(503).send('SSE transport not initialized. Connect to /sse first.');
+      res.status(404).send('Session not found');
       return;
     }
+    
     await transport.handlePostMessage(req, res);
   });
 
